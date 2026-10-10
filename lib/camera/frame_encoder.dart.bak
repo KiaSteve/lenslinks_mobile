@@ -1,0 +1,54 @@
+import 'dart:typed_data';
+
+import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
+
+class FrameEncoder {
+  static Future<Uint8List> encode(CameraImage image) async {
+    final width = image.width;
+    final height = image.height;
+
+    final img.Image rgbImage = img.Image(width: width, height: height);
+
+    final Plane yPlane = image.planes[0];
+    final Plane uPlane = image.planes[1];
+    final Plane vPlane = image.planes[2];
+
+    final int yRowStride = yPlane.bytesPerRow;
+    final int uvRowStride = uPlane.bytesPerRow;
+    final int uvPixelStride = uPlane.bytesPerPixel ?? 1;
+
+    for (int y = 0; y < height; y++) {
+      final int yRow = y * yRowStride;
+      final int uvRow = (y >> 1) * uvRowStride;
+
+      for (int x = 0; x < width; x++) {
+        final int yValue = yPlane.bytes[yRow + x];
+
+        final int uvIndex = uvRow + (x >> 1) * uvPixelStride;
+
+        final int uValue = uPlane.bytes[uvIndex];
+        final int vValue = vPlane.bytes[uvIndex];
+
+        final int c = yValue - 16;
+        final int d = uValue - 128;
+        final int e = vValue - 128;
+
+        int r = ((298 * c + 409 * e + 128) >> 8);
+        int g = ((298 * c - 100 * d - 208 * e + 128) >> 8);
+        int b = ((298 * c + 516 * d + 128) >> 8);
+
+        r = r.clamp(0, 255);
+        g = g.clamp(0, 255);
+        b = b.clamp(0, 255);
+
+        rgbImage.setPixelRgb(x, y, r, g, b);
+      }
+    }
+
+    // Rotate so the desktop preview matches the phone orientation.
+    final img.Image rotated = img.copyRotate(rgbImage, angle: 90);
+
+    return Uint8List.fromList(img.encodeJpg(rotated, quality: 70));
+  }
+}

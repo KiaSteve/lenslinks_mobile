@@ -7,7 +7,7 @@ class DiscoveryService {
     await _listener.start();
   }
 
-  Future<void> stop() async {
-    await _listener.stop();
+  void stop() {
+    _listener.stop();
   }
 }

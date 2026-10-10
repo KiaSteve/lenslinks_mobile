@@ -1,0 +1,68 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+class TcpServer {
+  TcpServer._internal();
+
+  static final TcpServer _instance = TcpServer._internal();
+
+  factory TcpServer() => _instance;
+
+  ServerSocket? _server;
+  Socket? _client;
+
+  Future<void> start() async {
+    if (_server != null) return;
+
+    _server = await ServerSocket.bind(InternetAddress.anyIPv4, 5001);
+
+    print("TCP Server listening on port 5001");
+
+    _server!.listen((Socket client) {
+      _client = client;
+
+      print("Desktop connected: ${client.remoteAddress.address}");
+
+      // DO NOT send JSON here.
+      // The connection must start with binary frame data.
+
+      client.listen(
+        (data) {
+          try {
+            final message = utf8.decode(data).trim();
+
+            print("Desktop says: $message");
+
+            if (message == "PING") {
+              client.write("PONG");
+            }
+          } catch (_) {
+            // Ignore binary data that isn't text.
+          }
+        },
+        onDone: () {
+          print("Desktop disconnected");
+          _client = null;
+        },
+        onError: (e) {
+          print("TCP Error: $e");
+          _client = null;
+        },
+      );
+    });
+  }
+
+  bool get isConnected => _client != null;
+
+  void sendFrame(Uint8List jpeg) {
+    if (_client == null) return;
+
+    final header = ByteData(4)..setUint32(0, jpeg.length, Endian.big);
+
+    _client!.add(header.buffer.asUint8List());
+    _client!.add(jpeg);
+
+    print("Frame sent: ${jpeg.length} bytes");
+  }
+}

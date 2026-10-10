@@ -1,0 +1,106 @@
+﻿import 'dart:typed_data';
+
+import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
+
+class FrameEncoder {
+  // Timing statistics, printed every ~5 seconds.
+  static int _frames = 0;
+  static int _convertUs = 0;
+  static int _jpegUs = 0;
+  static int _lastReportMs = DateTime.now().millisecondsSinceEpoch;
+
+  static Future<Uint8List> encode(CameraImage image) async {
+    final Stopwatch sw = Stopwatch()..start();
+
+    final int width = image.width;
+    final int height = image.height;
+
+    final Uint8List yBytes = image.planes[0].bytes;
+    final Uint8List uBytes = image.planes[1].bytes;
+    final Uint8List vBytes = image.planes[2].bytes;
+
+    final int yRowStride = image.planes[0].bytesPerRow;
+    final int uvRowStride = image.planes[1].bytesPerRow;
+    final int uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
+
+    // The output is the source rotated 90 degrees clockwise:
+    // source (x, y) -> output (height - 1 - y, x).
+    final int outW = height;
+    final int outH = width;
+    final Uint8List rgb = Uint8List(outW * outH * 3);
+
+    for (int y = 0; y < height; y++) {
+      final int yRow = y * yRowStride;
+      final int uvRow = (y >> 1) * uvRowStride;
+      final int outX = height - 1 - y;
+
+      for (int x = 0; x < width; x++) {
+        final int c = yBytes[yRow + x] - 16;
+        final int uvIndex = uvRow + (x >> 1) * uvPixelStride;
+        final int d = uBytes[uvIndex] - 128;
+        final int e = vBytes[uvIndex] - 128;
+
+        int r = (298 * c + 409 * e + 128) >> 8;
+        int g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+        int b = (298 * c + 516 * d + 128) >> 8;
+
+        if (r < 0) {
+          r = 0;
+        } else if (r > 255) {
+          r = 255;
+        }
+        if (g < 0) {
+          g = 0;
+        } else if (g > 255) {
+          g = 255;
+        }
+        if (b < 0) {
+          b = 0;
+        } else if (b > 255) {
+          b = 255;
+        }
+
+        final int o = (x * outW + outX) * 3;
+        rgb[o] = r;
+        rgb[o + 1] = g;
+        rgb[o + 2] = b;
+      }
+    }
+
+    final img.Image rotated = img.Image.fromBytes(
+      width: outW,
+      height: outH,
+      bytes: rgb.buffer,
+      numChannels: 3,
+    );
+
+    final int convertUs = sw.elapsedMicroseconds;
+
+    final Uint8List jpg = img.encodeJpg(rotated, quality: 70);
+
+    final int jpegUs = sw.elapsedMicroseconds - convertUs;
+
+    _frames++;
+    _convertUs += convertUs;
+    _jpegUs += jpegUs;
+
+    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs - _lastReportMs >= 5000) {
+      final double secs = (nowMs - _lastReportMs) / 1000;
+      print(
+        'ENC: ${width}x$height -> ${outW}x$outH, '
+        '${(_frames / secs).toStringAsFixed(1)} fps, '
+        'convert ${_convertUs ~/ _frames ~/ 1000} ms, '
+        'jpeg ${_jpegUs ~/ _frames ~/ 1000} ms, '
+        '${jpg.length} bytes',
+      );
+      _frames = 0;
+      _convertUs = 0;
+      _jpegUs = 0;
+      _lastReportMs = nowMs;
+    }
+
+    return jpg;
+  }
+}
