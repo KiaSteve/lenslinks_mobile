@@ -38,6 +38,7 @@ dependencies:
   network_info_plus: ^8.2.1
   camera: ^0.11.0+2
   image: ^4.5.4
+  record: ^7.1.2
   
 dev_dependencies:
   flutter_test:
