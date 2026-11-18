@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
+import 'networking/audio_server.dart';
 import 'networking/tcp_server.dart';
 import 'networking/udp_listener.dart';
 import 'screens/home_screen.dart';
@@ -9,6 +10,7 @@ Future<void> main() async {
 
   await UdpListener().start();
   await TcpServer().start();
+  await AudioServer().start();
 
   runApp(const LensLinksMobileApp());
 }
