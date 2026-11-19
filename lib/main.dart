@@ -1,12 +1,16 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import 'networking/audio_server.dart';
+import 'networking/pairing_store.dart';
 import 'networking/tcp_server.dart';
 import 'networking/udp_listener.dart';
 import 'screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load (or make) the pairing key before any connection can arrive.
+  await PairingStore.instance.load();
 
   await UdpListener().start();
   await TcpServer().start();

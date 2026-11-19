@@ -1,14 +1,18 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:record/record.dart';
 
+import 'pairing.dart';
+import 'pairing_store.dart';
+
 /// Streams the phone's microphone to the desktop on TCP port 5002.
 ///
-/// Format: PCM, 16-bit little-endian, 44100 Hz, mono, sent as chunks, each
-/// preceded by its length as a 4-byte big-endian integer. The microphone is
-/// only open while the desktop is connected to this port.
+/// The desktop must first pass the pairing handshake (see pairing.dart).
+/// Format after that: PCM, 16-bit little-endian, 44100 Hz, mono, sent as
+/// chunks, each preceded by its length as a 4-byte big-endian integer. The
+/// microphone is only open while a paired desktop is connected to this port.
 class AudioServer {
   AudioServer._internal();
 
@@ -24,6 +28,7 @@ class AudioServer {
 
   ServerSocket? _server;
   Socket? _client;
+  SecureWriter? _writer;
 
   AudioRecorder? _recorder;
   StreamSubscription<Uint8List>? _micSubscription;
@@ -47,17 +52,30 @@ class AudioServer {
   }
 
   void _onClient(Socket client) {
-    // One listener at a time: a new connection replaces the old one.
-    final previous = _client;
+    final String ip = client.remoteAddress.address;
+    final PairingGuard guard = PairingGuard.instance;
 
-    _stopCapture();
-    previous?.destroy();
+    // A PC that has guessed wrong too often is turned away at once.
+    if (guard.isLocked(ip)) {
+      print("Audio connection from $ip refused (too many wrong pairing keys)");
+      client.destroy();
+      return;
+    }
 
-    _client = client;
+    final PairingServer handshake = PairingServer(
+      key: PairingStore.instance.key,
+      send: client.add,
+    );
 
-    print("Audio client connected: ${client.remoteAddress.address}");
+    bool authenticated = false;
 
-    client.setOption(SocketOption.tcpNoDelay, true);
+    // Someone who connects and then says nothing must not hold the socket.
+    final Timer timeout = Timer(const Duration(seconds: 5), () {
+      if (!authenticated) {
+        print("Audio pairing timed out for $ip");
+        client.destroy();
+      }
+    });
 
     // Swallow asynchronous socket errors so they cannot surface as
     // unhandled exceptions.
@@ -66,12 +84,67 @@ class AudioServer {
       _dropClient(client);
     });
 
+    handshake.begin();
+
     client.listen(
-      (_) {},
-      onDone: () => _dropClient(client),
-      onError: (Object e) => _dropClient(client),
+      (data) {
+        // After the handshake the desktop sends nothing.
+        if (authenticated) return;
+
+        handshake.feed(data);
+
+        if (handshake.result == PairingResult.pending) return;
+
+        timeout.cancel();
+
+        if (handshake.result != PairingResult.accepted) {
+          guard.recordFailure(ip);
+          print("Audio pairing key refused for $ip");
+          _closeAfterFlush(client);
+          return;
+        }
+
+        authenticated = true;
+        guard.recordSuccess(ip);
+
+        _beginSession(client, SecureWriter(handshake.keys!));
+      },
+      onDone: () {
+        timeout.cancel();
+        _dropClient(client);
+      },
+      onError: (Object e) {
+        timeout.cancel();
+        _dropClient(client);
+      },
       cancelOnError: true,
     );
+  }
+
+  // Lets the "refused" byte reach the PC before the socket is closed.
+  void _closeAfterFlush(Socket client) {
+    try {
+      client.flush().then<void>((_) {}, onError: (Object _) {}).whenComplete(
+        client.destroy,
+      );
+    } catch (_) {
+      client.destroy();
+    }
+  }
+
+  void _beginSession(Socket client, SecureWriter writer) {
+    // One listener at a time: a new paired connection replaces the old one.
+    final previous = _client;
+
+    _stopCapture();
+    previous?.destroy();
+
+    _client = client;
+    _writer = writer;
+
+    print("Audio client connected (encrypted): ${client.remoteAddress.address}");
+
+    client.setOption(SocketOption.tcpNoDelay, true);
 
     unawaited(_startCapture(client));
   }
@@ -79,6 +152,7 @@ class AudioServer {
   void _dropClient(Socket client) {
     if (identical(_client, client)) {
       _client = null;
+      _writer = null;
       _stopCapture();
       print("Audio client disconnected");
     }
@@ -125,6 +199,13 @@ class AudioServer {
     }
   }
 
+  /// Disconnects the current desktop (for example after a new pairing key).
+  void disconnectClient() {
+    final client = _client;
+
+    if (client != null) _dropClient(client);
+  }
+
   void _stopCapture() {
     final subscription = _micSubscription;
     final recorder = _recorder;
@@ -150,11 +231,10 @@ class AudioServer {
   void _send(Socket client, Uint8List pcm) {
     if (!identical(_client, client) || pcm.isEmpty) return;
 
-    final header = ByteData(4)..setUint32(0, pcm.length, Endian.big);
+    final packet = Uint8List(4 + pcm.length);
 
-    final packet = Uint8List(4 + pcm.length)
-      ..setRange(0, 4, header.buffer.asUint8List())
-      ..setRange(4, 4 + pcm.length, pcm);
+    ByteData.sublistView(packet).setUint32(0, pcm.length, Endian.big);
+    packet.setRange(4, packet.length, pcm);
 
     // Writing while a flush is pending can throw, so hold the chunk until
     // the write in flight has finished.
@@ -169,9 +249,15 @@ class AudioServer {
   }
 
   void _write(Socket client, List<Uint8List> packets) {
+    final writer = _writer;
+
+    if (writer == null) return;
+
     try {
+      // Each packet is encrypted just before it is sent, in order, so a packet
+      // that is dropped earlier never leaves a gap in the sequence.
       for (final packet in packets) {
-        client.add(packet);
+        client.add(writer.seal(packet));
       }
 
       _flushing = client.flush().then<void>(

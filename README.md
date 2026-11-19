@@ -1,17 +1,41 @@
-# lenslinks_mobile
+# LensLinks Mobile
 
-A new Flutter project.
+Android app for **LensLinks** (version 1.0.0, "Model One"). It sends the phone's
+camera and microphone over Wi-Fi to the LensLinks Windows app, which turns them
+into a virtual webcam and can record them. See the `lenslinks` project for the
+Windows side and full instructions.
 
-## Getting Started
+## Use
 
-This project is a starting point for a Flutter application.
+1. Put the phone and the PC on the same Wi-Fi network.
+2. Open LensLinks Mobile and allow the camera and microphone permissions.
+3. The phone screen shows a 16-character **pairing key**. In the Windows app
+   press **Scan**, pick the phone and type that key once; the PC remembers it.
+   Tap **Make a new key** if the key ever leaks (the Windows app then needs the
+   new key).
 
-A few resources to get you started if this is your first Flutter project:
+## Network ports
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+| Port | Protocol | Purpose |
+| --- | --- | --- |
+| 5000 | UDP | Discovery (`LENSLINKS_DISCOVER` / `LENSLINKS_RESPONSE`) |
+| 5001 | TCP | Video (4-byte length + JPEG per frame) |
+| 5002 | TCP | Audio (16-bit mono PCM, 44.1 kHz) |
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Ports 5001 and 5002 require the pairing key and are **encrypted** (ChaCha20 with
+HMAC-SHA256 integrity checks, new session keys for every connection; the key is
+never sent). A PC that tries a wrong key 5 times is blocked for a minute. The key
+is stored in the app's private storage. See the `lenslinks` README for the
+full description and its limits (no forward secrecy, no independent audit).
+
+## Build and run
+
+```powershell
+flutter devices
+flutter run -d <device-id> --release
+```
+
+For a release APK: `flutter build apk --release`. Note that release builds are
+currently signed with the debug key and use the placeholder application ID
+`com.example.lenslinks_mobile`; set your own application ID and signing key
+before publishing to an app store.
