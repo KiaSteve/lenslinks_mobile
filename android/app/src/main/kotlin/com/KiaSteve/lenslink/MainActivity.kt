@@ -1,4 +1,4 @@
-package com.example.lenslinks_mobile
+package com.KiaSteve.lenslink
 
 import android.graphics.ImageFormat
 import android.graphics.Rect

@@ -35,7 +35,18 @@ flutter devices
 flutter run -d <device-id> --release
 ```
 
-For a release APK: `flutter build apk --release`. Note that release builds are
-currently signed with the debug key and use the placeholder application ID
-`com.example.lenslinks_mobile`; set your own application ID and signing key
-before publishing to an app store.
+For a release APK: `flutter build apk --release`.
+
+The application ID is `com.KiaSteve.lenslink`. Release builds are signed with
+your own key when `android\key.properties` exists (it points to a keystore kept
+outside the project; both are ignored by Git). Without it they fall back to the
+debug key, which is fine for testing but not for publishing. Create the key once:
+
+```powershell
+keytool -genkey -v -keystore $env:USERPROFILE\lenslinks-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias lenslinks
+```
+
+then create `android\key.properties` with `storePassword`, `keyPassword` (the same
+password), `keyAlias=lenslinks` and `storeFile=C:/Users/<you>/lenslinks-release.jks`.
+**Back up the keystore file and its password**: without them you cannot publish
+updates that install over earlier versions.
